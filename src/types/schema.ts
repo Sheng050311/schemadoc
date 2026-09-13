@@ -16,6 +16,7 @@ export interface DatabaseColumn {
   defaultValue: string | null;
   isPrimaryKey: boolean;
   isForeignKey: boolean;
+  isAutoIncrement: boolean;
 }
 
 export interface DatabaseRelationship {

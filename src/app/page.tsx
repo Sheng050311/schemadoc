@@ -220,7 +220,8 @@ export default function Home() {
                               <div className="flex gap-1.5">
                                 {column.isPrimaryKey && <abbr title="Primary key" className="rounded bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800 no-underline">PK</abbr>}
                                 {column.isForeignKey && <abbr title="Foreign key" className="rounded bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 no-underline">FK</abbr>}
-                                {!column.isPrimaryKey && !column.isForeignKey && <span className="text-slate-400">—</span>}
+                                {column.isAutoIncrement && <span className="whitespace-nowrap rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">AUTO_INCREMENT</span>}
+                                {!column.isPrimaryKey && !column.isForeignKey && !column.isAutoIncrement && <span className="text-slate-400">—</span>}
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-slate-600">{column.nullable ? "NULL" : "NOT NULL"}</td>

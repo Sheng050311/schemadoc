@@ -7,8 +7,8 @@ assert.deepEqual(simple, {
   tables: [{
     name: "users",
     columns: [
-      { name: "id", dataType: "INT", nullable: true, defaultValue: null, isPrimaryKey: false, isForeignKey: false },
-      { name: "name", dataType: "VARCHAR(100)", nullable: true, defaultValue: null, isPrimaryKey: false, isForeignKey: false },
+      { name: "id", dataType: "INT", nullable: true, defaultValue: null, isPrimaryKey: false, isForeignKey: false, isAutoIncrement: false },
+      { name: "name", dataType: "VARCHAR(100)", nullable: true, defaultValue: null, isPrimaryKey: false, isForeignKey: false, isAutoIncrement: false },
     ],
     primaryKeys: [],
   }],
@@ -219,3 +219,43 @@ for (const sql of [
   'COMMIT garbage;',
 ]) assert.throws(() => parseSqlSchema(sql), Error, sql);
 console.log('MySQL dump and ALTER TABLE validation passed.');
+
+const autoCreated = parseSqlSchema('CREATE TABLE c (id INT PRIMARY KEY AUTO_INCREMENT, label TEXT);');
+assert.equal(autoCreated.tables[0].columns[0].isAutoIncrement, true);
+assert.equal(autoCreated.tables[0].columns[1].isAutoIncrement, false);
+for (const modify of ['MODIFY', 'MODIFY COLUMN']) {
+  const result = parseSqlSchema(`CREATE TABLE c (id INT, label TEXT);
+    ALTER TABLE c ${modify} id INT(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
+    ALTER TABLE c ${modify} label VARCHAR(100) NOT NULL DEFAULT 'hello, world';
+  `).tables[0];
+  assert.equal(result.columns[0].dataType, 'INT(11)');
+  assert.equal(result.columns[0].nullable, false);
+  assert.equal(result.columns[0].isAutoIncrement, true);
+  assert.equal(result.columns[1].defaultValue, "'hello, world'");
+  assert.equal(result.columns[1].nullable, false);
+}
+const renamed = parseSqlSchema(`
+  CREATE TABLE p (id INT PRIMARY KEY);
+  CREATE TABLE c (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES p(id));
+  ALTER TABLE p CHANGE COLUMN id parent_key BIGINT NOT NULL AUTO_INCREMENT;
+  ALTER TABLE c CHANGE parent_id reference_id BIGINT;
+  ALTER TABLE c MODIFY id BIGINT;
+`);
+assert.deepEqual(renamed.tables[0].primaryKeys, ['parent_key']);
+assert.equal(renamed.tables[1].columns[0].isPrimaryKey, true);
+assert.equal(renamed.tables[1].columns[0].nullable, false);
+assert.equal(renamed.tables[1].columns[1].isForeignKey, true);
+assert.equal(renamed.relationships[0].sourceColumn, 'reference_id');
+assert.equal(renamed.relationships[0].targetColumn, 'parent_key');
+const resetDefinition = parseSqlSchema(`CREATE TABLE c (id INT NOT NULL DEFAULT 1 AUTO_INCREMENT);
+  ALTER TABLE c MODIFY id BIGINT;`).tables[0].columns[0];
+assert.equal(resetDefinition.nullable, true);
+assert.equal(resetDefinition.defaultValue, null);
+assert.equal(resetDefinition.isAutoIncrement, false);
+assert.equal(parseSqlSchema('CREATE TABLE c (id INT); ALTER TABLE c MODIFY id INT PRIMARY KEY;').tables[0].primaryKeys[0], 'id');
+assert.deepEqual(parseSqlSchema(`${customersSql} ALTER TABLE customers AUTO_INCREMENT=25;`), parseSqlSchema(customersSql));
+for (const action of ['MODIFY missing INT', 'MODIFY id', 'MODIFY id INT garbage', 'CHANGE id', 'AUTO_INCREMENT=-1', 'AUTO_INCREMENT=25 garbage', 'DROP COLUMN id', 'RENAME TO other', 'ADD COLUMN another INT']) {
+  assert.throws(() => parseSqlSchema(`${customersSql} ALTER TABLE customers ${action};`), Error, action);
+}
+assert.throws(() => parseSqlSchema('CREATE TABLE c (id INT, other INT); ALTER TABLE c CHANGE id other INT;'), /already exists/);
+console.log('MODIFY, CHANGE, and AUTO_INCREMENT validation passed.');

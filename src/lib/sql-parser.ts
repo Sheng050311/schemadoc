@@ -45,7 +45,40 @@ function applyAlter(schema: DatabaseSchema, tokens: string[]) {
   const table = schema.tables.find((entry) => entry.name === identifier(tokens[2]));
   if (!table) throw new Error(`ALTER TABLE refers to unknown table "${identifier(tokens[2])}".`);
   for (const action of splitDefinitions(tokens.slice(3))) {
-    if (action[0]?.toUpperCase() !== "ADD") throw new Error("Unsupported ALTER TABLE action. Only ADD keys and foreign keys are supported.");
+    const operation = action[0]?.toUpperCase();
+    if (operation === "AUTO_INCREMENT") {
+      const valueIndex = action[1] === "=" ? 2 : 1;
+      if (action.length !== valueIndex + 1 || !/^\d+$/.test(action[valueIndex] ?? "")) {
+        throw new Error("Expected AUTO_INCREMENT followed by a non-negative integer counter.");
+      }
+      continue;
+    }
+    if (operation === "MODIFY" || operation === "CHANGE") {
+      let start = action[1]?.toUpperCase() === "COLUMN" ? 2 : 1;
+      if (!isIdentifier(action[start])) throw new Error(`Expected a column name after ${operation}.`);
+      const oldName = identifier(action[start]);
+      const columnIndex = table.columns.findIndex((column) => column.name === oldName);
+      if (columnIndex === -1) throw new Error(`Unknown column "${oldName}" in table "${table.name}".`);
+      if (operation === "CHANGE") start++;
+      const replacement = parseColumn(action.slice(start));
+      const previous = table.columns[columnIndex];
+      if (table.columns.some((column, index) => index !== columnIndex && column.name === replacement.name)) {
+        throw new Error(`Column "${replacement.name}" already exists in table "${table.name}".`);
+      }
+      // MODIFY/CHANGE replace the definition, but do not drop existing keys.
+      replacement.isPrimaryKey ||= previous.isPrimaryKey;
+      replacement.isForeignKey = previous.isForeignKey;
+      if (replacement.isPrimaryKey) replacement.nullable = false;
+      table.columns[columnIndex] = replacement;
+      table.primaryKeys = table.primaryKeys.map((name) => name === oldName ? replacement.name : name);
+      if (replacement.isPrimaryKey && !table.primaryKeys.includes(replacement.name)) table.primaryKeys.push(replacement.name);
+      for (const relationship of schema.relationships) {
+        if (relationship.sourceTable === table.name && relationship.sourceColumn === oldName) relationship.sourceColumn = replacement.name;
+        if (relationship.targetTable === table.name && relationship.targetColumn === oldName) relationship.targetColumn = replacement.name;
+      }
+      continue;
+    }
+    if (operation !== "ADD") throw new Error(`Unsupported ALTER TABLE action "${operation}". Supported actions: ADD keys, MODIFY, CHANGE, and AUTO_INCREMENT.`);
     const definition = action.slice(1);
     const kind = definition[0]?.toUpperCase();
     if (["UNIQUE", "KEY", "INDEX"].includes(kind)) {
@@ -136,6 +169,7 @@ function parseColumn(tokens: string[]): DatabaseColumn {
 
   let nullable = true;
   let isPrimaryKey = false;
+  let isAutoIncrement = false;
   let defaultValue: string | null = null;
   while (index < tokens.length) {
     const keyword = tokens[index].toUpperCase();
@@ -151,6 +185,7 @@ function parseColumn(tokens: string[]): DatabaseColumn {
       continue;
     }
     if (["NULL", "AUTO_INCREMENT", "UNSIGNED", "SIGNED", "ZEROFILL"].includes(keyword)) {
+      if (keyword === "AUTO_INCREMENT") isAutoIncrement = true;
       index++;
       continue;
     }
@@ -199,6 +234,7 @@ function parseColumn(tokens: string[]): DatabaseColumn {
     defaultValue,
     isPrimaryKey,
     isForeignKey: false,
+    isAutoIncrement,
   };
 }
 
