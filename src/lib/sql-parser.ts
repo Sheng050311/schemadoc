@@ -17,8 +17,67 @@ function unexpected(token: string | undefined): never {
 function tokenize(sql: string): string[] {
   // Match quoted values before comments so "--" inside a string is preserved.
   return (
-    sql.match(/'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`|--[^\r\n]*|[\w$]+|[^\s]/g) ?? []
+    sql.match(/'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`(?:``|[^`])*`|--[^\r\n]*|\/\*![\s\S]*?\*\/|[\w$]+|[^\s]/g) ?? []
   ).filter((token) => !token.startsWith("--"));
+}
+
+function statementEnd(tokens: string[], start: number): number {
+  const end = tokens.indexOf(";", start);
+  return end === -1 ? tokens.length : end;
+}
+
+function isIgnoredDumpStatement(tokens: string[]): boolean {
+  const text = tokens.join(" ");
+  // This allowlist classifies dump statements, rather than validating their
+  // data or session settings. Quoted semicolons remain inside single tokens.
+  return /^SET\s+\S/i.test(text) ||
+    /^START TRANSACTION$/i.test(text) || /^COMMIT$/i.test(text) ||
+    /^INSERT INTO\s+\S/i.test(text) || /^LOCK TABLES\s+\S/i.test(text) ||
+    /^UNLOCK TABLES$/i.test(text) || /^DROP TABLE IF EXISTS\s+\S/i.test(text) ||
+    /^USE (?:`(?:``|[^`])+`|[\w$]+)$/i.test(text) ||
+    /^CREATE DATABASE\s+\S/i.test(text);
+}
+
+function applyAlter(schema: DatabaseSchema, tokens: string[]) {
+  if (tokens[1]?.toUpperCase() !== "TABLE" || !isIdentifier(tokens[2])) {
+    throw new Error("Expected ALTER TABLE table_name ADD constraint.");
+  }
+  const table = schema.tables.find((entry) => entry.name === identifier(tokens[2]));
+  if (!table) throw new Error(`ALTER TABLE refers to unknown table "${identifier(tokens[2])}".`);
+  for (const action of splitDefinitions(tokens.slice(3))) {
+    if (action[0]?.toUpperCase() !== "ADD") throw new Error("Unsupported ALTER TABLE action. Only ADD keys and foreign keys are supported.");
+    const definition = action.slice(1);
+    const kind = definition[0]?.toUpperCase();
+    if (["UNIQUE", "KEY", "INDEX"].includes(kind)) {
+      let start = 1;
+      if (kind === "UNIQUE" && ["KEY", "INDEX"].includes(definition[start]?.toUpperCase())) start++;
+      if (isIdentifier(definition[start])) start++;
+      const names = columnNames(definition, start);
+      if (closingParen(definition, start) !== definition.length - 1) unexpected(definition[closingParen(definition, start) + 1]);
+      for (const name of names) {
+        if (!table.columns.some((column) => column.name === name)) throw new Error(`Unknown index column "${name}" in table "${table.name}".`);
+      }
+      // DatabaseSchema has no unique/index metadata yet.
+      continue;
+    }
+    if (!["PRIMARY", "FOREIGN", "CONSTRAINT"].includes(kind) ||
+      (kind === "CONSTRAINT" && definition[2]?.toUpperCase() !== "FOREIGN")) {
+      throw new Error("Unsupported ALTER TABLE ADD definition.");
+    }
+    // Reuse CREATE TABLE's strict key validation rather than a second grammar.
+    const parsed = parseSqlSchema(`CREATE TABLE ${tokens[2]} (${definition.join(" ")});`);
+    const keys = parsed.tables[0].primaryKeys;
+    const sourceColumns = parsed.relationships.map((relationship) => relationship.sourceColumn);
+    for (const name of [...keys, ...sourceColumns]) {
+      if (!table.columns.some((column) => column.name === name)) throw new Error(`Unknown key column "${name}" in table "${table.name}".`);
+    }
+    table.primaryKeys = [...new Set([...table.primaryKeys, ...keys])];
+    for (const column of table.columns) {
+      if (keys.includes(column.name)) { column.isPrimaryKey = true; column.nullable = false; }
+      if (sourceColumns.includes(column.name)) column.isForeignKey = true;
+    }
+    schema.relationships.push(...parsed.relationships);
+  }
 }
 
 function splitDefinitions(tokens: string[]): string[][] {
@@ -143,19 +202,34 @@ function parseColumn(tokens: string[]): DatabaseColumn {
   };
 }
 
-/** Parses basic MySQL CREATE TABLE statements; defaults retain their SQL spelling. */
+/** Extracts supported CREATE/ALTER schema definitions from MySQL dumps. */
 export function parseSqlSchema(sql: string): DatabaseSchema {
   const schema: DatabaseSchema = { tables: [], relationships: [] };
   const tokens = tokenize(sql);
   for (let index = 0; index < tokens.length; index++) {
-    // Whitespace and line comments are removed by tokenize. Only separators
-    // may be skipped here; every other token must begin a supported statement.
+    // Every non-comment token must belong to a recognized statement or separator.
     if (tokens[index] === ";") continue;
+    if (tokens[index].startsWith("/*!")) {
+      const body = tokenize(tokens[index].slice(3, -2).replace(/^\d+\s*/, ""));
+      if (!body.length || isIgnoredDumpStatement(body)) continue;
+      throw new Error("Unsupported SQL in MySQL version comment. Only dump session/data statements may be ignored.");
+    }
+    if (tokens[index].toUpperCase() === "ALTER") {
+      const end = statementEnd(tokens, index);
+      applyAlter(schema, tokens.slice(index, end));
+      index = end - 1;
+      continue;
+    }
+    const dumpEnd = statementEnd(tokens, index);
+    if (isIgnoredDumpStatement(tokens.slice(index, dumpEnd))) {
+      index = dumpEnd - 1;
+      continue;
+    }
     if (
       tokens[index].toUpperCase() !== "CREATE" ||
       tokens[index + 1]?.toUpperCase() !== "TABLE"
     ) {
-      throw new Error(`Unexpected SQL outside a CREATE TABLE statement near "${tokens[index]}". Expected CREATE TABLE or a semicolon.`);
+      throw new Error(`Unexpected SQL outside a CREATE TABLE statement near "${tokens[index]}". Expected CREATE TABLE, supported ALTER TABLE, or a recognized dump statement.`);
     }
 
     index += 2;
@@ -233,6 +307,17 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
     }
     schema.tables.push(table);
     index = end;
+    // Common phpMyAdmin table options are storage metadata, not columns.
+    while (index + 1 < tokens.length) {
+      let option = index + 1;
+      if (tokens[option].toUpperCase() === "DEFAULT") option++;
+      if (tokens[option]?.toUpperCase() === "CHARACTER" && tokens[option + 1]?.toUpperCase() === "SET") option++;
+      else if (!["ENGINE", "CHARSET", "COLLATE", "AUTO_INCREMENT"].includes(tokens[option]?.toUpperCase())) break;
+      option++;
+      if (tokens[option] === "=") option++;
+      if (!/^[\w$]+$/.test(tokens[option] ?? "")) throw new Error("Expected a value for CREATE TABLE storage option.");
+      index = option;
+    }
   }
   return schema;
 }

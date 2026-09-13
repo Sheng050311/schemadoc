@@ -147,3 +147,75 @@ assert.deepEqual(parseSqlSchema(" \n; ; -- comments and separators only\n\t;"), 
 assert.equal(parseSqlSchema("CREATE TABLE notes (body TEXT DEFAULT 'hello; -- world');")
   .tables[0].columns[0].defaultValue, "'hello; -- world'");
 console.log(`SQL parser validation passed, including ${invalidCases.length + unconsumedCases.length} invalid-input cases.`);
+
+// Dump statements are ignored without interpreting quoted data as SQL.
+for (const prefix of [
+  "SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'; SET time_zone = '+00:00';",
+  "START TRANSACTION;",
+  "DROP TABLE IF EXISTS customers;",
+  "CREATE DATABASE IF NOT EXISTS demo; USE demo;",
+  "/*!40101 SET NAMES utf8mb4 */;",
+]) {
+  assert.deepEqual(parseSqlSchema(`${prefix}\n${customersSql}`), parseSqlSchema(customersSql));
+}
+assert.deepEqual(parseSqlSchema(`${customersSql}
+  LOCK TABLES customers WRITE;
+  INSERT INTO customers VALUES (1, 'hello; -- world'), (2, 'CREATE TABLE fake (id INT);');
+  UNLOCK TABLES; COMMIT;
+`), parseSqlSchema(customersSql));
+
+const altered = parseSqlSchema(`
+  CREATE TABLE customers (id INT, email VARCHAR(255));
+  CREATE TABLE orders (id INT, customer_id INT);
+  ALTER TABLE customers ADD PRIMARY KEY (id), ADD UNIQUE KEY email_unique (email);
+  ALTER TABLE orders ADD PRIMARY KEY (id), ADD KEY customer_id (customer_id);
+  ALTER TABLE orders ADD CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES customers(id);
+`);
+assert.deepEqual(altered.tables[0].primaryKeys, ['id']);
+assert.equal(altered.tables[0].columns[0].isPrimaryKey, true);
+assert.equal(altered.tables[0].columns[0].nullable, false);
+assert.equal(altered.tables[1].columns[1].isForeignKey, true);
+assert.deepEqual(altered.relationships, [{ sourceTable: 'orders', sourceColumn: 'customer_id', targetTable: 'customers', targetColumn: 'id' }]);
+for (const addition of ['UNIQUE (email)', 'UNIQUE KEY (email)', 'INDEX email_idx (email)', 'KEY (email)']) {
+  assert.equal(parseSqlSchema(`CREATE TABLE customers (email TEXT); ALTER TABLE customers ADD ${addition};`).tables.length, 1);
+}
+assert.equal(parseSqlSchema('CREATE TABLE c (id INT); ALTER TABLE c ADD FOREIGN KEY (id) REFERENCES p(id);').relationships.length, 1);
+
+const dump = parseSqlSchema(`
+  -- Simplified phpMyAdmin SQL dump
+  SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';
+  START TRANSACTION;
+  SET time_zone = '+00:00';
+  /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+  /*!40101 SET NAMES utf8mb4 */;
+  CREATE DATABASE IF NOT EXISTS demo;
+  USE demo;
+  DROP TABLE IF EXISTS customers;
+  CREATE TABLE customers (id INT NOT NULL, email VARCHAR(255) DEFAULT NULL)
+    ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  CREATE TABLE orders (id INT NOT NULL, customer_id INT NOT NULL, total DECIMAL(10,2) DEFAULT 0)
+    ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4;
+  INSERT INTO customers (id,email) VALUES (1,'one@example.com');
+  INSERT INTO orders VALUES (1,1,12.50);
+  ALTER TABLE customers ADD PRIMARY KEY (id), ADD UNIQUE (email);
+  ALTER TABLE orders ADD PRIMARY KEY (id), ADD INDEX (customer_id),
+    ADD CONSTRAINT fk_orders FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE;
+  COMMIT;
+  /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+`);
+assert.equal(dump.tables.length, 2);
+assert.equal(dump.tables[1].columns[2].defaultValue, '0');
+assert.equal(dump.relationships.length, 1);
+assert.ok(dump.tables.every(table => table.columns[0].isPrimaryKey));
+for (const sql of [
+  'hello world', `${customersSql} SELECT * FROM customers;`,
+  `${customersSql} DELETE FROM customers;`,
+  '/*!40101 hello world */;',
+  `${customersSql} ALTER TABLE customers DROP COLUMN id;`,
+  `${customersSql} ALTER TABLE customers ADD PRIMARY KEY (missing);`,
+  'ALTER TABLE missing ADD PRIMARY KEY (id);',
+  `${customersSql} ALTER TABLE customers ADD FOREIGN KEY (id) customers(id);`,
+  `${customersSql} ALTER TABLE customers ADD UNIQUE (id) garbage;`,
+  'COMMIT garbage;',
+]) assert.throws(() => parseSqlSchema(sql), Error, sql);
+console.log('MySQL dump and ALTER TABLE validation passed.');
