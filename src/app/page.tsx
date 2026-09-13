@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useState } from "react";
+import ErdViewer from "@/components/ErdViewer";
 import { parseSqlSchema } from "@/lib/sql-parser";
 import type { DatabaseSchema } from "@/types/schema";
 
@@ -160,6 +161,11 @@ export default function Home() {
                   </div>
                 </article>
               ))}
+            </section>
+
+            <section aria-labelledby="erd-heading" className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+              <h2 id="erd-heading" className="text-lg font-semibold">Entity Relationship Diagram</h2>
+              <ErdViewer schema={schema} />
             </section>
 
             <section aria-labelledby="relationships-heading" className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
