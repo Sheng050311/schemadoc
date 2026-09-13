@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ErdViewer from "@/components/ErdViewer";
 import { parseSqlSchema } from "@/lib/sql-parser";
 import type { DatabaseSchema } from "@/types/schema";
@@ -25,8 +25,55 @@ export default function Home() {
   const [sql, setSql] = useState("");
   const [schema, setSchema] = useState<DatabaseSchema | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [readingFile, setReadingFile] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const fileReadVersion = useRef(0);
+
+  function clearFile() {
+    fileReadVersion.current++;
+    setFileName(null);
+    setFileError(null);
+    setReadingFile(false);
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  async function loadFile(file: File) {
+    clearFile();
+    const version = fileReadVersion.current;
+    if (!file.name.toLowerCase().endsWith(".sql")) {
+      setFileError("Please choose a .sql file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setFileError("SQL files larger than 5 MB are not supported yet.");
+      return;
+    }
+    setFileName(file.name);
+    setReadingFile(true);
+    try {
+      const contents = await file.text();
+      // A newer selection, manual edit, or removal takes precedence.
+      if (version !== fileReadVersion.current) return;
+      if (!contents.trim()) {
+        setFileError("This SQL file is empty. Please choose a file containing SQL.");
+        return;
+      }
+      setSql(contents);
+      setSchema(null);
+      setError(null);
+    } catch {
+      if (version === fileReadVersion.current) {
+        setFileError("Could not read this SQL file. Please try selecting it again.");
+      }
+    } finally {
+      if (version === fileReadVersion.current) setReadingFile(false);
+    }
+  }
 
   function updateSql(value: string) {
+    clearFile();
     setSql(value);
     setSchema(null);
     setError(null);
@@ -75,6 +122,30 @@ export default function Home() {
             </button>
           </div>
           <form onSubmit={(event) => { event.preventDefault(); generateDocumentation(); }} className="p-5 sm:p-6">
+            <div className="mb-5 space-y-2">
+              <label htmlFor="sql-file" className="block text-sm font-medium">Load a SQL file</label>
+              <input
+                ref={fileInput}
+                id="sql-file"
+                type="file"
+                accept=".sql"
+                aria-describedby={fileError ? "file-help file-error" : "file-help"}
+                aria-invalid={Boolean(fileError)}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void loadFile(file);
+                }}
+                className="block w-full min-w-0 rounded-lg border border-slate-300 p-2 text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:font-medium file:text-slate-800 hover:file:bg-slate-200 focus-visible:outline-2 focus-visible:outline-indigo-600"
+              />
+              <p id="file-help" className="text-xs text-slate-500">.sql files up to 5 MB. Read locally; review the SQL before generating documentation.</p>
+              {fileName && (
+                <div className="flex flex-wrap items-center gap-3 text-sm">
+                  <p role="status" className="min-w-0 break-all text-slate-600">{readingFile ? "Reading: " : "Selected file: "}{fileName}</p>
+                  <button type="button" onClick={() => { clearFile(); setSql(""); setSchema(null); setError(null); }} className="rounded px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-50 focus-visible:outline-2 focus-visible:outline-indigo-600">Remove file</button>
+                </div>
+              )}
+              {fileError && <p id="file-error" role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{fileError}</p>}
+            </div>
             <label htmlFor="sql-input" className="sr-only">SQL input</label>
             <textarea
               id="sql-input"
@@ -91,7 +162,7 @@ export default function Home() {
             {error && <p id="sql-error" role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
             <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
               <p className="text-xs text-slate-500">Your SQL stays in your browser.</p>
-              <button type="submit" className="w-full rounded-lg bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 sm:w-auto">
+              <button type="submit" disabled={readingFile} className="w-full rounded-lg bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-wait disabled:opacity-60 sm:w-auto">
                 Generate Documentation
               </button>
             </div>
