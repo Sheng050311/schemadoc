@@ -148,10 +148,15 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
   const schema: DatabaseSchema = { tables: [], relationships: [] };
   const tokens = tokenize(sql);
   for (let index = 0; index < tokens.length; index++) {
+    // Whitespace and line comments are removed by tokenize. Only separators
+    // may be skipped here; every other token must begin a supported statement.
+    if (tokens[index] === ";") continue;
     if (
       tokens[index].toUpperCase() !== "CREATE" ||
       tokens[index + 1]?.toUpperCase() !== "TABLE"
-    ) continue;
+    ) {
+      throw new Error(`Unexpected SQL outside a CREATE TABLE statement near "${tokens[index]}". Expected CREATE TABLE or a semicolon.`);
+    }
 
     index += 2;
     if (
@@ -228,9 +233,6 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
     }
     schema.tables.push(table);
     index = end;
-  }
-  if (tokens.length && !schema.tables.length) {
-    throw new Error("No CREATE TABLE statements found. Provide a MySQL CREATE TABLE schema.");
   }
   return schema;
 }

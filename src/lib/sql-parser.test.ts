@@ -100,7 +100,7 @@ const invalidCases: [string, RegExp][] = [
   ["CREATE TABLE c (id INT NOT);", /missing comma/i],
   ["CREATE TABLE c (id INT DEFAULT);", /requires a value/i],
   ["CREATE TABLE c (id INT DEFAULT -);", /numeric DEFAULT/i],
-  ["This is completely non-SQL input.", /No CREATE TABLE/i],
+  ["This is completely non-SQL input.", /Unexpected SQL outside a CREATE TABLE/i],
 ];
 for (const [sql, message] of invalidCases) {
   assert.throws(() => parseSqlSchema(sql), message, sql);
@@ -118,4 +118,32 @@ const attributes = parseSqlSchema(`
 assert.equal(attributes.tables[0].columns.length, 4);
 assert.equal(attributes.relationships.length, 1);
 assert.equal(attributes.tables[0].columns[3].defaultValue, "CURRENT_TIMESTAMP");
-console.log(`SQL parser validation passed, including ${invalidCases.length} invalid-input cases.`);
+const customersSql = "CREATE TABLE customers (id INT PRIMARY KEY);";
+const ordersSql = "CREATE TABLE orders (id INT PRIMARY KEY);";
+const unconsumedCases = [
+  `${customersSql}\nhello world`,
+  `hello world\n${customersSql}`,
+  `${customersSql}\ngarbage text\n${ordersSql}`,
+  `${customersSql}\nSELECT 1;`,
+  `${customersSql})`,
+  `${customersSql}\n/* unsupported block comment */`,
+];
+for (const sql of unconsumedCases) {
+  assert.throws(() => parseSqlSchema(sql), /Unexpected SQL outside a CREATE TABLE statement near/i, sql);
+}
+const cleanMultiple = parseSqlSchema(`${customersSql}\n${ordersSql}`);
+assert.deepEqual(cleanMultiple.tables.map((table) => table.name), ["customers", "orders"]);
+assert.deepEqual(parseSqlSchema(`
+  ; -- customer table
+  ${customersSql}
+
+  ; ;
+  -- orders table
+  ${ordersSql}
+  ; -- trailing comment without a newline`), cleanMultiple);
+assert.deepEqual(parseSqlSchema(" \n; ; -- comments and separators only\n\t;"), {
+  tables: [], relationships: [],
+});
+assert.equal(parseSqlSchema("CREATE TABLE notes (body TEXT DEFAULT 'hello; -- world');")
+  .tables[0].columns[0].defaultValue, "'hello; -- world'");
+console.log(`SQL parser validation passed, including ${invalidCases.length + unconsumedCases.length} invalid-input cases.`);

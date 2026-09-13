@@ -35,7 +35,7 @@ export default function Home() {
     setError(null);
     setSchema(null);
     if (!sql.trim()) {
-      setError("Paste a CREATE TABLE statement or load the example to get started.");
+      setError("Please enter some SQL first.");
       return;
     }
     try {
@@ -46,8 +46,7 @@ export default function Home() {
       }
       setSchema(result);
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : "Check your SQL syntax.";
-      setError(`Could not generate documentation. ${detail}`);
+      setError(cause instanceof Error ? cause.message : "Could not parse SQL. Check your SQL syntax.");
     }
   }
 
