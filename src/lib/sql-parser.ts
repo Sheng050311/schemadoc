@@ -7,6 +7,13 @@
 const identifier = (token: string) =>
   token.startsWith("`") ? token.slice(1, -1).replaceAll("``", "`") : token;
 
+const isIdentifier = (token: string | undefined) =>
+  token !== undefined && /^(?:[a-zA-Z_$][\w$]*|`(?:``|[^`])+`)$/.test(token);
+
+function unexpected(token: string | undefined): never {
+  throw new Error(`Unexpected token "${token ?? "end of definition"}". Check for a missing comma between column definitions.`);
+}
+
 function tokenize(sql: string): string[] {
   // Match quoted values before comments so "--" inside a string is preserved.
   return (
@@ -20,7 +27,8 @@ function splitDefinitions(tokens: string[]): string[][] {
   let depth = 0;
   for (const token of tokens) {
     if (token === "," && depth === 0) {
-      if (current.length) definitions.push(current);
+      if (!current.length) throw new Error("Empty definition between commas.");
+      definitions.push(current);
       current = [];
       continue;
     }
@@ -28,11 +36,15 @@ function splitDefinitions(tokens: string[]): string[][] {
     if (token === ")") depth--;
     current.push(token);
   }
-  if (current.length) definitions.push(current);
+  if (!current.length) throw new Error("Empty definition or trailing comma in CREATE TABLE body.");
+  definitions.push(current);
   return definitions;
 }
 
 function closingParen(tokens: string[], start: number): number {
+  if (start < 0 || tokens[start] !== "(") {
+    throw new Error("Expected an opening parenthesis for a column list or type.");
+  }
   let depth = 0;
   for (let index = start; index < tokens.length; index++) {
     if (tokens[index] === "(") depth++;
@@ -43,12 +55,18 @@ function closingParen(tokens: string[], start: number): number {
 
 function columnNames(tokens: string[], start: number): string[] {
   const end = closingParen(tokens, start);
-  return splitDefinitions(tokens.slice(start + 1, end)).map((part) =>
-    identifier(part[0]),
-  );
+  return splitDefinitions(tokens.slice(start + 1, end)).map((part) => {
+    if (part.length !== 1 || !isIdentifier(part[0])) {
+      throw new Error("Invalid key column list. Separate column names with commas.");
+    }
+    return identifier(part[0]);
+  });
 }
 
 function parseColumn(tokens: string[]): DatabaseColumn {
+  if (!isIdentifier(tokens[0]) || !/^[a-zA-Z]+$/.test(tokens[1] ?? "")) {
+    throw new Error("Malformed column definition: expected a column name and data type.");
+  }
   let index = 2;
   let dataType = tokens[1].toUpperCase();
   if (tokens[index] === "(") {
@@ -63,24 +81,57 @@ function parseColumn(tokens: string[]): DatabaseColumn {
   while (index < tokens.length) {
     const keyword = tokens[index].toUpperCase();
     const next = tokens[index + 1]?.toUpperCase();
-    if (keyword === "NOT" && next === "NULL") nullable = false;
-    if (keyword === "PRIMARY" && next === "KEY") isPrimaryKey = true;
-    if (keyword === "DEFAULT") {
+    if (keyword === "NOT" && next === "NULL") {
+      nullable = false;
+      index += 2;
+      continue;
+    }
+    if (keyword === "PRIMARY" && next === "KEY") {
+      isPrimaryKey = true;
+      index += 2;
+      continue;
+    }
+    if (["NULL", "AUTO_INCREMENT", "UNSIGNED", "SIGNED", "ZEROFILL"].includes(keyword)) {
+      index++;
+      continue;
+    }
+    if (keyword === "UNIQUE") {
+      index += next === "KEY" ? 2 : 1;
+      continue;
+    }
+    if (keyword === "COMMENT" && /^['"]/.test(tokens[index + 1] ?? "")) {
+      index += 2;
+      continue;
+    }
+    if (keyword === "DEFAULT" || (keyword === "ON" && next === "UPDATE")) {
+      const isDefault = keyword === "DEFAULT";
+      if (!isDefault) index++;
       const start = ++index;
       if (index >= tokens.length) throw new Error("DEFAULT requires a value.");
-      if (tokens[index] === "+" || tokens[index] === "-") index++;
+      if (tokens[index] === "+" || tokens[index] === "-") {
+        index++;
+        if (!/^\d+$/.test(tokens[index] ?? "")) throw new Error("Expected a numeric DEFAULT value after sign.");
+      }
       if (tokens[index] === "(") {
         index = closingParen(tokens, index);
       } else {
         // Decimal literals and function defaults such as CURRENT_TIMESTAMP().
-        if (tokens[index + 1] === ".") index += 2;
+        if (!/^(?:\d+|NULL|TRUE|FALSE|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|LOCALTIME|LOCALTIMESTAMP|NOW)$/i.test(tokens[index]) && !/^(['"])(?:[\s\S]*)\1$/.test(tokens[index])) {
+          throw new Error("Invalid DEFAULT value. Quote string values and check for missing commas.");
+        }
+        if (tokens[index + 1] === ".") {
+          index += 2;
+          if (!/^\d+$/.test(tokens[index] ?? "")) throw new Error("Invalid numeric DEFAULT value.");
+        }
         if (tokens[index + 1] === "(") {
           index = closingParen(tokens, index + 1);
         }
       }
-      defaultValue = tokens.slice(start, index + 1).join("");
+      if (isDefault) defaultValue = tokens.slice(start, index + 1).join("");
+      index++;
+      continue;
     }
-    index++;
+    unexpected(tokens[index]);
   }
   return {
     name: identifier(tokens[0]),
@@ -110,7 +161,7 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
     ) index += 3;
 
     const name = identifier(tokens[index] ?? "");
-    if (!name || tokens[index + 1] !== "(") {
+    if (!isIdentifier(tokens[index]) || tokens[index + 1] !== "(") {
       throw new Error("Expected a table name and column definitions.");
     }
     const start = index + 1;
@@ -118,19 +169,35 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
     const table: DatabaseTable = { name, columns: [], primaryKeys: [] };
     for (let definition of splitDefinitions(tokens.slice(start + 1, end))) {
       if (definition[0].toUpperCase() === "CONSTRAINT") {
+        if (!isIdentifier(definition[1]) || !["PRIMARY", "FOREIGN", "UNIQUE", "CHECK"].includes(definition[2]?.toUpperCase())) {
+          throw new Error("Malformed CONSTRAINT definition.");
+        }
         definition = definition.slice(2);
       }
       const upper = definition.map((token) => token.toUpperCase());
-      if (upper[0] === "PRIMARY" && upper[1] === "KEY") {
+      if (upper[0] === "PRIMARY") {
+        if (upper[1] !== "KEY" || definition[2] !== "(") throw new Error("Expected PRIMARY KEY (columns).");
         table.primaryKeys.push(...columnNames(definition, 2));
-      } else if (upper[0] === "FOREIGN" && upper[1] === "KEY") {
+        if (closingParen(definition, 2) !== definition.length - 1) unexpected(definition[closingParen(definition, 2) + 1]);
+      } else if (upper[0] === "FOREIGN") {
         const sourceStart = definition.indexOf("(");
+        if (upper[1] !== "KEY" || !(sourceStart === 2 || (sourceStart === 3 && isIdentifier(definition[2])))) {
+          throw new Error("Malformed FOREIGN KEY: expected FOREIGN KEY (columns) REFERENCES table(columns).");
+        }
         const sourceColumns = columnNames(definition, sourceStart);
-        const reference = upper.indexOf("REFERENCES");
-        if (reference === -1 || definition[reference + 2] !== "(") {
+        const reference = closingParen(definition, sourceStart) + 1;
+        if (upper[reference] !== "REFERENCES" || !isIdentifier(definition[reference + 1]) || definition[reference + 2] !== "(") {
           throw new Error("FOREIGN KEY requires REFERENCES table(columns).");
         }
         const targetColumns = columnNames(definition, reference + 2);
+        let tail = closingParen(definition, reference + 2) + 1;
+        while (tail < definition.length) {
+          if (upper[tail] !== "ON" || !["DELETE", "UPDATE"].includes(upper[tail + 1])) unexpected(definition[tail]);
+          tail += 2;
+          if (["CASCADE", "RESTRICT"].includes(upper[tail])) tail++;
+          else if ((upper[tail] === "SET" && ["NULL", "DEFAULT"].includes(upper[tail + 1])) || (upper[tail] === "NO" && upper[tail + 1] === "ACTION")) tail += 2;
+          else throw new Error("Malformed FOREIGN KEY referential action.");
+        }
         if (sourceColumns.length !== targetColumns.length) {
           throw new Error("Foreign key column counts must match.");
         }
@@ -161,6 +228,9 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
     }
     schema.tables.push(table);
     index = end;
+  }
+  if (tokens.length && !schema.tables.length) {
+    throw new Error("No CREATE TABLE statements found. Provide a MySQL CREATE TABLE schema.");
   }
   return schema;
 }

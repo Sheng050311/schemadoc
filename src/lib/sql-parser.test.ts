@@ -74,4 +74,48 @@ assert.equal(composite.relationships.length, 2);
 assert.ok(composite.tables[0].columns.every((column) => column.isForeignKey));
 assert.deepEqual(parseSqlSchema("-- empty\n"), { tables: [], relationships: [] });
 assert.throws(() => parseSqlSchema("CREATE TABLE broken (id INT"), /Unclosed/);
-console.log("SQL parser validation passed.");
+const invalidCases: [string, RegExp][] = [
+  [`CREATE TABLE customers (
+    id INT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL
+    email VARCHAR(255)
+  );`, /missing comma/i],
+  ["CREATE TABLE customers (name TEXT email VARCHAR(255));", /missing comma/i],
+  ["CREATE TABLE customers (id INT DEFAULT 0 email TEXT);", /missing comma/i],
+  ["CREATE TABLE customers (id INT", /Unclosed parenthesis/i],
+  ["CREATE TABLE (id INT);", /table name/i],
+  ["CREATE TABLE c (id INT, FOREIGN (id) REFERENCES p(id));", /FOREIGN KEY/i],
+  ["CREATE TABLE c (id INT, FOREIGN KEY id REFERENCES p(id));", /FOREIGN KEY/i],
+  ["CREATE TABLE c (id INT, FOREIGN KEY (id) p(id));", /REFERENCES/i],
+  ["CREATE TABLE c (id INT, FOREIGN KEY (id) REFERENCES (id));", /REFERENCES/i],
+  ["CREATE TABLE c (id INT, FOREIGN KEY (id extra) REFERENCES p(id));", /column list/i],
+  ["CREATE TABLE c (id INT, FOREIGN KEY (id) REFERENCES p(id) email TEXT);", /missing comma/i],
+  ["CREATE TABLE c (id INT, FOREIGN KEY (id) REFERENCES p(id,other));", /counts must match/i],
+  ["CREATE TABLE c (id INT, PRIMARY KEY (id) email TEXT);", /missing comma/i],
+  ["CREATE TABLE c (id INT, PRIMARY (id));", /PRIMARY KEY/i],
+  ["CREATE TABLE c (id INT,);", /trailing comma/i],
+  ["CREATE TABLE c (id INT,, name TEXT);", /Empty definition/i],
+  ["CREATE TABLE c ();", /Empty definition/i],
+  ["CREATE TABLE c (id);", /data type/i],
+  ["CREATE TABLE c (id INT NOT);", /missing comma/i],
+  ["CREATE TABLE c (id INT DEFAULT);", /requires a value/i],
+  ["CREATE TABLE c (id INT DEFAULT -);", /numeric DEFAULT/i],
+  ["This is completely non-SQL input.", /No CREATE TABLE/i],
+];
+for (const [sql, message] of invalidCases) {
+  assert.throws(() => parseSqlSchema(sql), message, sql);
+}
+
+const attributes = parseSqlSchema(`
+  CREATE TABLE IF NOT EXISTS child (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    parent_id INT NULL,
+    label VARCHAR(100) UNIQUE COMMENT 'email VARCHAR(255)',
+    updated DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY fk_parent (parent_id) REFERENCES parent(id) ON DELETE SET NULL ON UPDATE CASCADE
+  );
+`);
+assert.equal(attributes.tables[0].columns.length, 4);
+assert.equal(attributes.relationships.length, 1);
+assert.equal(attributes.tables[0].columns[3].defaultValue, "CURRENT_TIMESTAMP");
+console.log(`SQL parser validation passed, including ${invalidCases.length} invalid-input cases.`);
