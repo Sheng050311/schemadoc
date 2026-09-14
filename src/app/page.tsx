@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useRef, useState } from "react";
 import ErdViewer from "@/components/ErdViewer";
@@ -138,21 +138,27 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8">
+        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-8 sm:py-8">
           <div className="mb-3 flex items-center gap-3">
             <span aria-hidden="true" className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 font-mono text-lg font-bold text-white">{"{}"}</span>
-            <h1 className="text-2xl font-semibold tracking-tight">SchemaDoc</h1>
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">SchemaDoc</h1>
           </div>
-          <p className="text-sm text-slate-600 sm:text-base">Turn SQL schemas into clear database documentation.</p>
+          <p className="max-w-3xl text-2xl font-semibold leading-tight tracking-tight text-slate-950 sm:text-4xl">Turn MySQL schemas into clear database documentation and ERDs.</p>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">Upload or paste a MySQL schema or phpMyAdmin dump and instantly understand tables, columns, keys, relationships, and database structure.</p>
+          <ul className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium text-slate-600 sm:text-sm">
+            {["No database connection required", "SQL stays in your browser", "Free Beta"].map((point) => (
+              <li key={point} className="flex items-center gap-2"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{point}</li>
+            ))}
+          </ul>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-8 px-4 py-8 sm:px-8 sm:py-10">
+      <main className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-8 sm:py-8">
         <section aria-labelledby="input-heading" className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-5 py-5 sm:px-6">
             <div>
               <h2 id="input-heading" className="font-semibold">SQL schema</h2>
-              <p id="sql-help" className="mt-1 text-sm text-slate-500">Paste one or more MySQL CREATE TABLE statements.</p>
+              <p id="sql-help" className="mt-1 text-sm text-slate-500">Paste your SQL below or choose a local .sql file. MySQL schemas and supported phpMyAdmin dumps work here.</p>
             </div>
             <button type="button" onClick={() => updateSql(EXAMPLE_SQL)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">
               Load Example
@@ -183,7 +189,7 @@ export default function Home() {
               )}
               {fileError && <p id="file-error" role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{fileError}</p>}
             </div>
-            <label htmlFor="sql-input" className="sr-only">SQL input</label>
+            <label htmlFor="sql-input" className="mb-2 block text-sm font-medium">SQL input</label>
             <textarea
               id="sql-input"
               value={sql}
@@ -218,11 +224,6 @@ export default function Home() {
           </section>
         ) : (
           <div className="space-y-8">
-            <div className="flex flex-wrap items-center gap-3">
-              <button type="button" onClick={() => void copyDocumentation()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600">Copy Documentation</button>
-              <button type="button" onClick={exportMarkdown} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-indigo-600">Export Markdown</button>
-              <p role="status" className="text-sm text-slate-600">{copyFeedback?.schema === schema ? copyFeedback.message : ""}</p>
-            </div>
             <section aria-labelledby="overview-heading">
               <h2 id="overview-heading" className="mb-4 text-lg font-semibold">Schema overview</h2>
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -277,11 +278,6 @@ export default function Home() {
               ))}
             </section>
 
-            <section aria-labelledby="erd-heading" className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
-              <h2 id="erd-heading" className="text-lg font-semibold">Entity Relationship Diagram</h2>
-              <ErdViewer schema={schema} />
-            </section>
-
             <section aria-labelledby="relationships-heading" className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
               <h2 id="relationships-heading" className="text-lg font-semibold">Relationships</h2>
               {schema.relationships.length ? (
@@ -296,9 +292,29 @@ export default function Home() {
                 </ul>
               ) : <p className="mt-2 text-sm text-slate-500">No foreign key relationships found in this schema.</p>}
             </section>
+            <section aria-labelledby="erd-heading" className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+              <h2 id="erd-heading" className="text-lg font-semibold">Entity Relationship Diagram</h2>
+              <ErdViewer schema={schema} />
+            </section>
+
+            <section aria-labelledby="export-heading" className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-5 sm:p-6">
+              <h2 id="export-heading" className="text-lg font-semibold">Take your documentation with you</h2>
+              <p className="mb-4 mt-1 text-sm text-slate-600">Copy the Markdown or save a file for your project notes.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => void copyDocumentation()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600">Copy Documentation</button>
+              <button type="button" onClick={exportMarkdown} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-indigo-600">Export Markdown</button>
+              <p role="status" className="text-sm text-slate-600">{copyFeedback?.schema === schema ? copyFeedback.message : ""}</p>
+            </div>
+            </section>
           </div>
         )}
       </main>
+      <footer className="border-t border-slate-200">
+        <div className="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-6 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          <p className="font-medium text-slate-700">SchemaDoc &mdash; Beta</p>
+          <p className="text-slate-500">Built for developers and students.</p>
+        </div>
+      </footer>
     </div>
   );
 }
