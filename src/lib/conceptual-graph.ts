@@ -1,9 +1,15 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { DatabaseSchema } from "../types/schema";
+import type { DatabaseSchema, SuggestedRelationship } from "../types/schema";
 
-export type ConceptualNode = Node<{ label: string; primaryKey?: boolean; description?: string }, "entity" | "attribute" | "relationship">;
+export type RelationshipSourceMode = "defined" | "high" | "all";
+type ConceptualNodeData = { label: string; primaryKey?: boolean; description?: string; suggested?: boolean; confidence?: SuggestedRelationship["confidence"] };
+export type ConceptualNode = Node<ConceptualNodeData, "entity" | "attribute" | "relationship">;
 
-export function generateConceptualGraph(schema: DatabaseSchema) {
+function relationshipKey(relationship: { sourceTable: string; sourceColumn: string; targetTable: string; targetColumn: string }) {
+  return JSON.stringify([relationship.sourceTable, relationship.sourceColumn, relationship.targetTable, relationship.targetColumn].map((value) => value.toLowerCase()));
+}
+
+export function generateConceptualGraph(schema: DatabaseSchema, suggestions: SuggestedRelationship[] = [], relationshipSource: RelationshipSourceMode = "defined") {
   const nodes: ConceptualNode[] = [];
   const edges: Edge[] = [];
   const columns = Math.max(1, Math.ceil(Math.sqrt(schema.tables.length)));
@@ -27,16 +33,26 @@ export function generateConceptualGraph(schema: DatabaseSchema) {
   });
   let missingRelationships = 0;
   const relationshipY = Math.ceil(schema.tables.length / columns) * clusterHeight;
-  schema.relationships.forEach((relationship, index) => {
+  const definedKeys = new Set(schema.relationships.map(relationshipKey));
+  const selectedSuggestions = relationshipSource === "defined"
+    ? []
+    : suggestions.filter((suggestion) => relationshipSource === "all" || suggestion.confidence === "high");
+  const relationships = [
+    ...schema.relationships.map((relationship) => ({ relationship, suggested: false as const })),
+    ...selectedSuggestions
+      .filter((suggestion) => !definedKeys.has(relationshipKey(suggestion)))
+      .map((suggestion) => ({ relationship: suggestion, suggested: true as const })),
+  ];
+  relationships.forEach(({ relationship, suggested }, index) => {
     const source = tableIds.get(relationship.sourceTable);
     const target = tableIds.get(relationship.targetTable);
     if (!source || !target) { missingRelationships++; return; }
     const id = `relationship-${index}`;
     nodes.push({ id, type: "relationship", position: { x: (index % columns) * clusterWidth + 100, y: relationshipY + Math.floor(index / columns) * 160 },
-      data: { label: "references", description: `${relationship.sourceTable}.${relationship.sourceColumn} references ${relationship.targetTable}.${relationship.targetColumn}` }, style: { width: 160, height: 100 } });
+      data: { label: suggested ? `Suggested${"confidence" in relationship ? ` (${relationship.confidence})` : ""}` : "references", suggested, description: `${relationship.sourceTable}.${relationship.sourceColumn} references ${relationship.targetTable}.${relationship.targetColumn}` }, style: { width: 160, height: 100 } });
     edges.push(
-      { id: `${id}-source`, source, target: id, sourceHandle: "out", targetHandle: "in", style: { stroke: "#b45309" } },
-      { id: `${id}-target`, source: id, target, sourceHandle: "out", targetHandle: "in", style: { stroke: "#b45309" } },
+      { id: `${id}-source`, source, target: id, sourceHandle: "out", targetHandle: "in", style: { stroke: suggested ? "#0f766e" : "#b45309", strokeDasharray: suggested ? "6 4" : undefined } },
+      { id: `${id}-target`, source: id, target, sourceHandle: "out", targetHandle: "in", style: { stroke: suggested ? "#0f766e" : "#b45309", strokeDasharray: suggested ? "6 4" : undefined } },
     );
   });
   return { nodes, edges, missingRelationships };

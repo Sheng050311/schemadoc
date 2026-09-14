@@ -358,7 +358,7 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              {erdView === "technical" ? <ErdViewer schema={schema} /> : <ConceptualErd schema={schema} />}
+              {erdView === "technical" ? <ErdViewer schema={schema} /> : <ConceptualErd schema={schema} suggestions={suggestions} />}
             </section>
 
             <section aria-labelledby="export-heading" className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-5 sm:p-6">

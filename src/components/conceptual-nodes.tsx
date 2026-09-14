@@ -23,8 +23,9 @@ export const AttributeNode = memo(function AttributeNode({ data, selected }: Nod
 });
 
 export const RelationshipNode = memo(function RelationshipNode({ data, selected }: NodeProps<ConceptualNode>) {
-  return <div title={data.description} className="relative flex h-full w-full items-center justify-center font-mono text-xs text-amber-950">
-    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 160 100" aria-hidden="true"><polygon points="80,2 158,50 80,98 2,50" fill="#fffbeb" stroke={selected ? "#4f46e5" : "#b45309"} strokeWidth="2" /></svg>
+  const stroke = selected ? "#4f46e5" : data.suggested ? "#0f766e" : "#b45309";
+  return <div title={data.description} className={`relative flex h-full w-full items-center justify-center font-mono text-xs ${data.suggested ? "text-teal-950" : "text-amber-950"}`}>
+    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 160 100" aria-hidden="true"><polygon points="80,2 158,50 80,98 2,50" fill={data.suggested ? "#f0fdfa" : "#fffbeb"} stroke={stroke} strokeWidth="2" strokeDasharray={data.suggested ? "6 4" : undefined} /></svg>
     <Handle id="in" type="target" position={Position.Left} style={handleStyle} />
     <span className="relative">{data.label}</span>
     <Handle id="out" type="source" position={Position.Right} style={handleStyle} />
