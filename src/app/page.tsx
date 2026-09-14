@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import ErdViewer from "@/components/ErdViewer";
+import ConceptualErd from "@/components/ConceptualErd";
 import { parseSqlSchema } from "@/lib/sql-parser";
 import { suggestRelationships } from "@/lib/relationship-suggester";
 import { generateMarkdownDocumentation } from "@/lib/documentation-generator";
@@ -26,6 +27,7 @@ CREATE TABLE orders (
 export default function Home() {
   const [sql, setSql] = useState("");
   const [schema, setSchema] = useState<DatabaseSchema | null>(null);
+  const [erdView, setErdView] = useState<"technical" | "conceptual">("technical");
   const suggestions = useMemo(() => schema ? suggestRelationships(schema) : [], [schema]);
   const [suggestionFilter, setSuggestionFilter] = useState<"all" | "high" | "medium">("high");
   const highCount = suggestions.filter((suggestion) => suggestion.confidence === "high").length;
@@ -348,7 +350,15 @@ export default function Home() {
 
             <section aria-labelledby="erd-heading" className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
               <h2 id="erd-heading" className="text-lg font-semibold">Entity Relationship Diagram</h2>
-              <ErdViewer schema={schema} />
+              <div role="group" aria-label="ERD view" className="mt-4 flex flex-wrap gap-2">
+                {(["technical", "conceptual"] as const).map((view) => (
+                  <button key={view} type="button" aria-pressed={erdView === view} onClick={() => setErdView(view)}
+                    className={`rounded-lg border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${erdView === view ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
+                    {view === "technical" ? "Technical ERD" : "Conceptual ERD"}
+                  </button>
+                ))}
+              </div>
+              {erdView === "technical" ? <ErdViewer schema={schema} /> : <ConceptualErd schema={schema} />}
             </section>
 
             <section aria-labelledby="export-heading" className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-5 sm:p-6">
