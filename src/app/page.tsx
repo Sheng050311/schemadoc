@@ -1,8 +1,9 @@
 ﻿"use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ErdViewer from "@/components/ErdViewer";
 import { parseSqlSchema } from "@/lib/sql-parser";
+import { generateMarkdownDocumentation } from "@/lib/documentation-generator";
 import type { DatabaseSchema } from "@/types/schema";
 
 const SAMPLE_SQL = `CREATE TABLE customers (
@@ -30,6 +31,42 @@ export default function Home() {
   const [readingFile, setReadingFile] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const fileReadVersion = useRef(0);
+  const [copyFeedback, setCopyFeedback] = useState<{ schema: DatabaseSchema; message: string } | null>(null);
+  const copyVersion = useRef(0);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    copyVersion.current++;
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+  }, [schema]);
+
+  async function copyDocumentation() {
+    if (!schema) return;
+    const version = ++copyVersion.current;
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    setCopyFeedback(null);
+    try {
+      await navigator.clipboard.writeText(generateMarkdownDocumentation(schema));
+      if (version !== copyVersion.current) return;
+      setCopyFeedback({ schema, message: "Copied!" });
+      copyTimer.current = setTimeout(() => setCopyFeedback(null), 2500);
+    } catch {
+      if (version === copyVersion.current) setCopyFeedback({ schema, message: "Could not copy to the clipboard. Please try again or use Export Markdown." });
+    }
+  }
+
+  function exportMarkdown() {
+    if (!schema) return;
+    const blob = new Blob([generateMarkdownDocumentation(schema)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "schemadoc-documentation.md";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   function clearFile() {
     fileReadVersion.current++;
@@ -181,6 +218,11 @@ export default function Home() {
           </section>
         ) : (
           <div className="space-y-8">
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => void copyDocumentation()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600">Copy Documentation</button>
+              <button type="button" onClick={exportMarkdown} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-indigo-600">Export Markdown</button>
+              <p role="status" className="text-sm text-slate-600">{copyFeedback?.schema === schema ? copyFeedback.message : ""}</p>
+            </div>
             <section aria-labelledby="overview-heading">
               <h2 id="overview-heading" className="mb-4 text-lg font-semibold">Schema overview</h2>
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">

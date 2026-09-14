@@ -1,0 +1,82 @@
+SchemaDoc - How to Open the Website
+
+Project Location:
+C:\Projects\schemadoc
+
+
+1. Open VS Code
+
+Open this folder:
+
+C:\Projects\schemadoc
+
+
+2. Open Terminal
+
+In VS Code:
+
+Terminal
+→ New Terminal
+
+If PowerShell gives an error, use:
+
+Command Prompt
+
+
+3. Start the website
+
+Type:
+
+npm run dev
+
+
+4. Wait until you see something like:
+
+Local: http://localhost:3000
+
+
+5. Open the website
+
+Open Chrome or Edge and go to:
+
+http://localhost:3000
+
+
+6. If port 3000 is already being used
+
+Next.js may use another port, for example:
+
+http://localhost:3001
+
+Always use the Local URL shown in the terminal.
+
+
+7. Stop the website
+
+Go back to the terminal and press:
+
+Ctrl + C
+
+
+8. Open SchemaDoc again next time
+
+Open Command Prompt or VS Code Terminal and type:
+
+cd C:\Projects\schemadoc
+
+npm run dev
+
+Then open:
+
+http://localhost:3000
+
+
+Important:
+
+The current SchemaDoc website is running on localhost.
+
+This means:
+- It is only running on my computer.
+- VS Code does not have to stay open, but the npm run dev terminal must keep running.
+- If I restart or shut down the computer, I need to run npm run dev again.
+- Later, SchemaDoc can be deployed to Vercel so it will have a public website link.
