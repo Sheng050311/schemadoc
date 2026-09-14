@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ErdViewer from "@/components/ErdViewer";
 import { parseSqlSchema } from "@/lib/sql-parser";
+import { suggestRelationships } from "@/lib/relationship-suggester";
 import { generateMarkdownDocumentation } from "@/lib/documentation-generator";
 import type { DatabaseSchema } from "@/types/schema";
 
@@ -25,6 +26,11 @@ CREATE TABLE orders (
 export default function Home() {
   const [sql, setSql] = useState("");
   const [schema, setSchema] = useState<DatabaseSchema | null>(null);
+  const suggestions = useMemo(() => schema ? suggestRelationships(schema) : [], [schema]);
+  const [suggestionFilter, setSuggestionFilter] = useState<"all" | "high" | "medium">("high");
+  const highCount = suggestions.filter((suggestion) => suggestion.confidence === "high").length;
+  const mediumCount = suggestions.length - highCount;
+  const filteredSuggestions = suggestions.filter((suggestion) => suggestionFilter === "all" || suggestion.confidence === suggestionFilter);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -226,11 +232,12 @@ export default function Home() {
           <div className="space-y-8">
             <section aria-labelledby="overview-heading">
               <h2 id="overview-heading" className="mb-4 text-lg font-semibold">Schema overview</h2>
-              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {[
                   { label: "Tables", value: schema.tables.length },
                   { label: "Columns", value: schema.tables.reduce((total, table) => total + table.columns.length, 0) },
-                  { label: "Relationships", value: schema.relationships.length },
+                  { label: "Defined Relationships", value: schema.relationships.length },
+                  { label: "Suggested Relationships", value: suggestions.length },
                 ].map(({ label, value }) => (
                   <div key={label} className="rounded-xl border border-slate-200 bg-white p-5">
                     <dt className="text-sm text-slate-500">{label}</dt>
@@ -279,7 +286,8 @@ export default function Home() {
             </section>
 
             <section aria-labelledby="relationships-heading" className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
-              <h2 id="relationships-heading" className="text-lg font-semibold">Relationships</h2>
+              <h2 id="relationships-heading" className="text-lg font-semibold">Defined Relationships</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">Relationships explicitly declared with FOREIGN KEY constraints.</p>
               {schema.relationships.length ? (
                 <ul className="mt-4 space-y-3">
                   {schema.relationships.map((relationship, index) => (
@@ -290,8 +298,54 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-              ) : <p className="mt-2 text-sm text-slate-500">No foreign key relationships found in this schema.</p>}
+              ) : <p className="mt-4 text-sm text-slate-500">No defined foreign-key relationships were found.</p>}
             </section>
+            <section aria-labelledby="suggestions-heading" className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+              <h2 id="suggestions-heading" className="text-lg font-semibold">Suggested Relationships</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">Relationships inferred from naming patterns and are not defined foreign keys.</p>
+              <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+                {[
+                  { label: "Total", count: suggestions.length },
+                  { label: "High confidence", count: highCount },
+                  { label: "Medium confidence", count: mediumCount },
+                ].map(({ label, count }) => (
+                  <div key={label} className="rounded-lg bg-slate-50 px-4 py-3">
+                    <dt className="text-slate-600">{label}</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">{count}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div role="group" aria-label="Filter suggested relationships by confidence" className="mt-4 flex flex-wrap gap-2">
+                {(["all", "high", "medium"] as const).map((filter) => (
+                  <button key={filter} type="button" aria-pressed={suggestionFilter === filter}
+                    onClick={() => setSuggestionFilter(filter)}
+                    className={`rounded-lg border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${suggestionFilter === filter ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
+                    {filter === "all" ? "All" : filter === "high" ? "High" : "Medium"}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-600">Medium-confidence suggestions may have competing targets, type differences, or inferred naming matches.</p>
+              <p role="status" className="mt-2 text-xs text-slate-500">Showing {filteredSuggestions.length} of {suggestions.length} suggestions.</p>
+              {filteredSuggestions.length ? (
+                <ul className="mt-4 space-y-3">
+                  {filteredSuggestions.map((suggestion) => (
+                    <li key={JSON.stringify([suggestion.sourceTable, suggestion.sourceColumn, suggestion.targetTable, suggestion.targetColumn])} className="rounded-lg border border-amber-100 bg-amber-50/50 p-4">
+                      <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
+                        <span className="min-w-0 break-all">{suggestion.sourceTable}.{suggestion.sourceColumn}</span>
+                        <span aria-label="may reference" className="text-amber-700">→</span>
+                        <span className="min-w-0 break-all">{suggestion.targetTable}.{suggestion.targetColumn}</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium">
+                        <span className="rounded bg-amber-100 px-2 py-1 text-amber-900">Suggested</span>
+                        <span className="rounded bg-white px-2 py-1 text-slate-700">{suggestion.confidence === "high" ? "High" : "Medium"} confidence</span>
+                      </div>
+                      <p className="mt-2 break-words text-sm leading-6 text-slate-600">Reason: {suggestion.reason}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="mt-4 text-sm text-slate-500">{suggestions.length === 0 ? "No suggested relationships found." : `No ${suggestionFilter}-confidence suggestions found. Select All to review other suggestions.`}</p>}
+            </section>
+
             <section aria-labelledby="erd-heading" className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
               <h2 id="erd-heading" className="text-lg font-semibold">Entity Relationship Diagram</h2>
               <ErdViewer schema={schema} />

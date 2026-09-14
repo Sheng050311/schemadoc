@@ -25,3 +25,12 @@ export interface DatabaseRelationship {
   targetTable: string;
   targetColumn: string;
 }
+
+export interface SuggestedRelationship {
+  sourceTable: string;
+  sourceColumn: string;
+  targetTable: string;
+  targetColumn: string;
+  confidence: "high" | "medium";
+  reason: string;
+}
