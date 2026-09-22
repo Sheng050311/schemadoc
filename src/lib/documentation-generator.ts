@@ -27,6 +27,10 @@ export function generateMarkdownDocumentation(schema: DatabaseSchema): string {
         !column.nullable && "NOT NULL", column.isAutoIncrement && "AUTO_INCREMENT"].filter(Boolean).join(", ");
       lines.push(`| ${escapeMarkdown(column.name)} | ${escapeMarkdown(column.dataType)} | ${attributes || "—"} | ${column.defaultValue === null ? "—" : escapeMarkdown(column.defaultValue)} |`);
     }
+    if (table.uniqueKeys.length) {
+      lines.push("", "**UNIQUE constraints:**");
+      for (const key of table.uniqueKeys) lines.push(`- UNIQUE (${key.map(escapeMarkdown).join(", ")})`);
+    }
     lines.push("");
   }
   lines.push("## Relationships", "");

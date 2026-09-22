@@ -257,6 +257,12 @@ export default function Home() {
                     <h3 className="break-all font-mono font-semibold">{table.name}</h3>
                     <span className="text-xs text-slate-500">{table.columns.length} columns</span>
                   </div>
+                  {table.uniqueKeys.length > 0 && <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-sm">
+                    <p className="font-medium text-slate-700">UNIQUE constraints</p>
+                    <ul className="mt-1 flex flex-wrap gap-2 font-mono text-xs text-slate-600">
+                      {table.uniqueKeys.map((key, keyIndex) => <li key={`${key.join("-")}-${keyIndex}`} className="rounded bg-white px-2 py-1 ring-1 ring-slate-200">UNIQUE ({key.join(", ")})</li>)}
+                    </ul>
+                  </div>}
                   <div className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-indigo-600" tabIndex={0} role="region" aria-label={`${table.name} columns`}>
                     <table className="w-full text-left text-sm">
                       <caption className="sr-only">Columns in {table.name}</caption>

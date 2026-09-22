@@ -13,6 +13,17 @@ assert.ok(markdown.includes('| total | DECIMAL\\(10,2\\) | — | 0 |'));
 assert.ok(markdown.includes('orders.customer_id'));
 assert.ok(markdown.includes('customers.id'));
 assert.ok(markdown.includes('FK, NOT NULL'));
+const uniqueSchema = parseSqlSchema(`CREATE TABLE users (
+  id INT PRIMARY KEY,
+  email VARCHAR(255) UNIQUE,
+  first_name VARCHAR(100),
+  last_name VARCHAR(100),
+  UNIQUE (first_name, last_name)
+);`);
+const uniqueMarkdown = generateMarkdownDocumentation(uniqueSchema);
+assert.ok(uniqueMarkdown.includes('UNIQUE (email)'));
+assert.ok(uniqueMarkdown.includes('UNIQUE (first\\_name, last\\_name)'));
+assert.ok(uniqueMarkdown.includes('| id | INT | PK, NOT NULL |'));
 const empty = generateMarkdownDocumentation({ tables: [], relationships: [], foreignKeys: [] });
 assert.ok(empty.includes('No defined foreign-key relationships were found.'));
 schema.tables[0].columns[0].defaultValue = "'a|b\n<script>`'";
