@@ -1,5 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { DatabaseSchema, SuggestedRelationship } from "../types/schema";
+import { inferRelationshipCardinality } from "./cardinality-inference";
 
 export type RelationshipSourceMode = "defined" | "high" | "all";
 type ConceptualNodeData = { label: string; primaryKey?: boolean; description?: string; suggested?: boolean; confidence?: SuggestedRelationship["confidence"] };
@@ -9,7 +10,14 @@ function relationshipKey(relationship: { sourceTable: string; sourceColumn: stri
   return JSON.stringify([relationship.sourceTable, relationship.sourceColumn, relationship.targetTable, relationship.targetColumn].map((value) => value.toLowerCase()));
 }
 
-export function generateConceptualGraph(schema: DatabaseSchema, suggestions: SuggestedRelationship[] = [], relationshipSource: RelationshipSourceMode = "defined") {
+function cardinalityLabel(min: 0 | 1 | "unknown", max: 1 | "many" | "unknown"): string | undefined {
+  if (min !== "unknown" && max !== "unknown" && max !== "many") return `${min}..${max}`;
+  if (min !== "unknown") return String(min);
+  if (max === 1) return "1";
+  return undefined;
+}
+
+export function generateConceptualGraph(schema: Pick<DatabaseSchema, "tables" | "relationships" | "foreignKeys">, suggestions: SuggestedRelationship[] = [], relationshipSource: RelationshipSourceMode = "defined") {
   const nodes: ConceptualNode[] = [];
   const edges: Edge[] = [];
   const columns = Math.max(1, Math.ceil(Math.sqrt(schema.tables.length)));
@@ -38,7 +46,7 @@ export function generateConceptualGraph(schema: DatabaseSchema, suggestions: Sug
     ? []
     : suggestions.filter((suggestion) => relationshipSource === "all" || suggestion.confidence === "high");
   const relationships = [
-    ...schema.relationships.map((relationship) => ({ relationship, suggested: false as const })),
+    ...schema.foreignKeys.map((relationship) => ({ relationship, suggested: false as const })),
     ...selectedSuggestions
       .filter((suggestion) => !definedKeys.has(relationshipKey(suggestion)))
       .map((suggestion) => ({ relationship: suggestion, suggested: true as const })),
@@ -48,11 +56,16 @@ export function generateConceptualGraph(schema: DatabaseSchema, suggestions: Sug
     const target = tableIds.get(relationship.targetTable);
     if (!source || !target) { missingRelationships++; return; }
     const id = `relationship-${index}`;
+    // Defined relationships use the grouped FK so composite keys receive one diamond and one inference result.
+    const cardinality = suggested ? undefined : inferRelationshipCardinality(schema, relationship);
+    const sourceLabel = cardinality && cardinalityLabel(cardinality.targetMin, cardinality.targetMax);
+    const targetLabel = cardinality && cardinalityLabel(cardinality.sourceMin, cardinality.sourceMax);
+    const labelStyle = { fill: "#475569", fontSize: 12, fontWeight: 600 };
     nodes.push({ id, type: "relationship", position: { x: (index % columns) * clusterWidth + 100, y: relationshipY + Math.floor(index / columns) * 160 },
-      data: { label: suggested ? `Suggested${"confidence" in relationship ? ` (${relationship.confidence})` : ""}` : "references", suggested, description: `${relationship.sourceTable}.${relationship.sourceColumn} references ${relationship.targetTable}.${relationship.targetColumn}` }, style: { width: 160, height: 100 } });
+      data: { label: suggested ? `Suggested${"confidence" in relationship ? ` (${relationship.confidence})` : ""}` : "references", suggested, description: `${relationship.sourceTable}.${suggested ? relationship.sourceColumn : relationship.sourceColumns.join(", ")} references ${relationship.targetTable}.${suggested ? relationship.targetColumn : relationship.targetColumns.join(", ")}` }, style: { width: 160, height: 100 } });
     edges.push(
-      { id: `${id}-source`, source, target: id, sourceHandle: "out", targetHandle: "in", style: { stroke: suggested ? "#0f766e" : "#b45309", strokeDasharray: suggested ? "6 4" : undefined } },
-      { id: `${id}-target`, source: id, target, sourceHandle: "out", targetHandle: "in", style: { stroke: suggested ? "#0f766e" : "#b45309", strokeDasharray: suggested ? "6 4" : undefined } },
+      { id: `${id}-source`, source, target: id, sourceHandle: "out", targetHandle: "in", label: sourceLabel, labelStyle, labelBgStyle: { fill: "#f8fafc", fillOpacity: 0.9 }, labelBgPadding: [3, 2], style: { stroke: suggested ? "#0f766e" : "#b45309", strokeDasharray: suggested ? "6 4" : undefined } },
+      { id: `${id}-target`, source: id, target, sourceHandle: "out", targetHandle: "in", label: targetLabel, labelStyle, labelBgStyle: { fill: "#f8fafc", fillOpacity: 0.9 }, labelBgPadding: [3, 2], style: { stroke: suggested ? "#0f766e" : "#b45309", strokeDasharray: suggested ? "6 4" : undefined } },
     );
   });
   return { nodes, edges, missingRelationships };

@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { generateMarkdownDocumentation } from './documentation-generator';
 import { parseSqlSchema } from './sql-parser';
 
@@ -13,7 +13,7 @@ assert.ok(markdown.includes('| total | DECIMAL\\(10,2\\) | — | 0 |'));
 assert.ok(markdown.includes('orders.customer_id'));
 assert.ok(markdown.includes('customers.id'));
 assert.ok(markdown.includes('FK, NOT NULL'));
-const empty = generateMarkdownDocumentation({ tables: [], relationships: [] });
+const empty = generateMarkdownDocumentation({ tables: [], relationships: [], foreignKeys: [] });
 assert.ok(empty.includes('No defined foreign-key relationships were found.'));
 schema.tables[0].columns[0].defaultValue = "'a|b\n<script>`'";
 const escaped = generateMarkdownDocumentation(schema);

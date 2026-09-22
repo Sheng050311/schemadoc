@@ -19,6 +19,7 @@ export default function ConceptualErd({ schema, suggestions }: { schema: Databas
   const selectedSchema = useMemo(() => ({
     tables: schema.tables.filter((table) => selectedNames.has(table.name)),
     relationships: schema.relationships.filter((relationship) => selectedNames.has(relationship.sourceTable) && selectedNames.has(relationship.targetTable)),
+    foreignKeys: schema.foreignKeys.filter((foreignKey) => selectedNames.has(foreignKey.sourceTable) && selectedNames.has(foreignKey.targetTable)),
   }), [schema, selectedNames]);
   const selectedSuggestions = useMemo(() => suggestions.filter((relationship) => selectedNames.has(relationship.sourceTable) && selectedNames.has(relationship.targetTable)), [suggestions, selectedNames]);
   const graph = useMemo(() => generateConceptualGraph(selectedSchema, selectedSuggestions, relationshipSource), [selectedSchema, selectedSuggestions, relationshipSource]);
@@ -74,6 +75,7 @@ export default function ConceptualErd({ schema, suggestions }: { schema: Databas
         <li className="flex items-center gap-2"><span aria-hidden="true" className="h-4 w-6 rounded-[50%] border border-slate-400 bg-white" />Attribute</li>
         <li className="flex items-center gap-2"><span aria-hidden="true" className="mx-1 h-3 w-3 rotate-45 border-2 border-amber-700 bg-amber-50" />Defined Relationship</li>
         <li className="flex items-center gap-2"><span aria-hidden="true" className="mx-1 h-3 w-3 rotate-45 border-2 border-dashed border-teal-700 bg-teal-50" />Suggested Relationship</li>
+        <li>Cardinality is shown only when it can be inferred from schema constraints.</li>
       </ul>
       <p className="text-sm text-slate-600">Drag nodes to arrange them; pan or zoom to explore. Hide attributes to focus on entities and relationships.</p>
       {graph.missingRelationships > 0 && <p role="status" className="text-sm text-amber-800">Some relationships cannot be drawn because their referenced tables are missing.</p>}

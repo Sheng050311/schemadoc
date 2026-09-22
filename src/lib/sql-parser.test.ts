@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { parseSqlSchema } from "./sql-parser";
 
 // Internal validation: run with Node using the installed TypeScript compiler.
@@ -10,9 +10,9 @@ assert.deepEqual(simple, {
       { name: "id", dataType: "INT", nullable: true, defaultValue: null, isPrimaryKey: false, isForeignKey: false, isAutoIncrement: false },
       { name: "name", dataType: "VARCHAR(100)", nullable: true, defaultValue: null, isPrimaryKey: false, isForeignKey: false, isAutoIncrement: false },
     ],
-    primaryKeys: [],
+    primaryKeys: [], uniqueKeys: [],
   }],
-  relationships: [],
+  relationships: [], foreignKeys: [],
 });
 
 const multiple = parseSqlSchema(`
@@ -72,7 +72,7 @@ const composite = parseSqlSchema(
 );
 assert.equal(composite.relationships.length, 2);
 assert.ok(composite.tables[0].columns.every((column) => column.isForeignKey));
-assert.deepEqual(parseSqlSchema("-- empty\n"), { tables: [], relationships: [] });
+assert.deepEqual(parseSqlSchema("-- empty\n"), { tables: [], relationships: [], foreignKeys: [] });
 assert.throws(() => parseSqlSchema("CREATE TABLE broken (id INT"), /Unclosed/);
 const invalidCases: [string, RegExp][] = [
   [`CREATE TABLE customers (
@@ -142,7 +142,7 @@ assert.deepEqual(parseSqlSchema(`
   ${ordersSql}
   ; -- trailing comment without a newline`), cleanMultiple);
 assert.deepEqual(parseSqlSchema(" \n; ; -- comments and separators only\n\t;"), {
-  tables: [], relationships: [],
+  tables: [], relationships: [], foreignKeys: [],
 });
 assert.equal(parseSqlSchema("CREATE TABLE notes (body TEXT DEFAULT 'hello; -- world');")
   .tables[0].columns[0].defaultValue, "'hello; -- world'");
@@ -259,3 +259,33 @@ for (const action of ['MODIFY missing INT', 'MODIFY id', 'MODIFY id INT garbage'
 }
 assert.throws(() => parseSqlSchema('CREATE TABLE c (id INT, other INT); ALTER TABLE c CHANGE id other INT;'), /already exists/);
 console.log('MODIFY, CHANGE, and AUTO_INCREMENT validation passed.');
+
+const metadata = parseSqlSchema(`
+CREATE TABLE parent (a INT, b INT, email TEXT UNIQUE, PRIMARY KEY (a,b), UNIQUE KEY pair (a,b));
+CREATE TABLE child (a INT, b INT, label TEXT, UNIQUE (a,b), KEY ordinary (label),
+ CONSTRAINT fk_pair FOREIGN KEY (a,b) REFERENCES parent(a,b));
+ALTER TABLE child ADD UNIQUE KEY label_key (label), ADD UNIQUE (b);
+ALTER TABLE child ADD CONSTRAINT fk_single FOREIGN KEY (a) REFERENCES parent(a);
+ALTER TABLE child ADD FOREIGN KEY (b) REFERENCES parent(b);
+`);
+assert.deepEqual(metadata.tables[0].uniqueKeys, [['email'], ['a','b']]);
+assert.deepEqual(metadata.tables[1].uniqueKeys, [['a','b'], ['label'], ['b']]);
+assert.equal(metadata.foreignKeys.length, 3);
+assert.deepEqual(metadata.foreignKeys[0], {name:'fk_pair',sourceTable:'child',sourceColumns:['a','b'],targetTable:'parent',targetColumns:['a','b']});
+assert.equal(metadata.foreignKeys[1].name, 'fk_single');
+assert.equal(metadata.foreignKeys[2].name, null);
+assert.equal(metadata.relationships.length,4);
+const renamedMetadata = parseSqlSchema(`CREATE TABLE p (a INT UNIQUE, b INT, UNIQUE KEY pair (a,b));
+CREATE TABLE c (x INT, y INT, UNIQUE KEY pair (x,y), FOREIGN KEY (x,y) REFERENCES p(a,b));
+ALTER TABLE p CHANGE a new_a INT;
+ALTER TABLE c CHANGE x new_x INT;
+`);
+assert.deepEqual(renamedMetadata.tables[0].uniqueKeys,[['new_a'],['new_a','b']]);
+assert.deepEqual(renamedMetadata.tables[1].uniqueKeys,[['new_x','y']]);
+assert.deepEqual(renamedMetadata.foreignKeys[0].sourceColumns,['new_x','y']);
+assert.deepEqual(renamedMetadata.foreignKeys[0].targetColumns,['new_a','b']);
+assert.equal(renamedMetadata.relationships[0].sourceColumn,'new_x');
+assert.equal(renamedMetadata.relationships[0].targetColumn,'new_a');
+assert.deepEqual(parseSqlSchema('CREATE TABLE c (id INT, KEY k (id), INDEX i (id)); ALTER TABLE c ADD INDEX (id);').tables[0].uniqueKeys,[]);
+assert.deepEqual(parseSqlSchema('CREATE TABLE c (email TEXT UNIQUE KEY);').tables[0].uniqueKeys,[['email']]);
+console.log('Unique and grouped foreign-key metadata validation passed.');

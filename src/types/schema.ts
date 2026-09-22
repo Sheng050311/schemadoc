@@ -1,12 +1,22 @@
 ﻿export interface DatabaseSchema {
   tables: DatabaseTable[];
   relationships: DatabaseRelationship[];
+  foreignKeys: DatabaseForeignKey[];
 }
 
 export interface DatabaseTable {
   name: string;
   columns: DatabaseColumn[];
   primaryKeys: string[];
+  uniqueKeys: string[][];
+}
+
+export interface DatabaseForeignKey {
+  name: string | null;
+  sourceTable: string;
+  sourceColumns: string[];
+  targetTable: string;
+  targetColumns: string[];
 }
 
 export interface DatabaseColumn {

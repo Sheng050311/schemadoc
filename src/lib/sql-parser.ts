@@ -60,7 +60,8 @@ function applyAlter(schema: DatabaseSchema, tokens: string[]) {
       const columnIndex = table.columns.findIndex((column) => column.name === oldName);
       if (columnIndex === -1) throw new Error(`Unknown column "${oldName}" in table "${table.name}".`);
       if (operation === "CHANGE") start++;
-      const replacement = parseColumn(action.slice(start));
+      const inlineUnique: string[][] = [];
+      const replacement = parseColumn(action.slice(start), inlineUnique);
       const previous = table.columns[columnIndex];
       if (table.columns.some((column, index) => index !== columnIndex && column.name === replacement.name)) {
         throw new Error(`Column "${replacement.name}" already exists in table "${table.name}".`);
@@ -71,6 +72,12 @@ function applyAlter(schema: DatabaseSchema, tokens: string[]) {
       if (replacement.isPrimaryKey) replacement.nullable = false;
       table.columns[columnIndex] = replacement;
       table.primaryKeys = table.primaryKeys.map((name) => name === oldName ? replacement.name : name);
+      table.uniqueKeys = table.uniqueKeys.map((key) => key.map((name) => name === oldName ? replacement.name : name));
+      table.uniqueKeys.push(...inlineUnique);
+      for (const foreignKey of schema.foreignKeys) {
+        if (foreignKey.sourceTable === table.name) foreignKey.sourceColumns = foreignKey.sourceColumns.map((name) => name === oldName ? replacement.name : name);
+        if (foreignKey.targetTable === table.name) foreignKey.targetColumns = foreignKey.targetColumns.map((name) => name === oldName ? replacement.name : name);
+      }
       if (replacement.isPrimaryKey && !table.primaryKeys.includes(replacement.name)) table.primaryKeys.push(replacement.name);
       for (const relationship of schema.relationships) {
         if (relationship.sourceTable === table.name && relationship.sourceColumn === oldName) relationship.sourceColumn = replacement.name;
@@ -90,7 +97,7 @@ function applyAlter(schema: DatabaseSchema, tokens: string[]) {
       for (const name of names) {
         if (!table.columns.some((column) => column.name === name)) throw new Error(`Unknown index column "${name}" in table "${table.name}".`);
       }
-      // DatabaseSchema has no unique/index metadata yet.
+      if (kind === "UNIQUE") table.uniqueKeys.push(names);
       continue;
     }
     if (!["PRIMARY", "FOREIGN", "CONSTRAINT"].includes(kind) ||
@@ -110,6 +117,7 @@ function applyAlter(schema: DatabaseSchema, tokens: string[]) {
       if (sourceColumns.includes(column.name)) column.isForeignKey = true;
     }
     schema.relationships.push(...parsed.relationships);
+    schema.foreignKeys.push(...parsed.foreignKeys);
   }
 }
 
@@ -155,7 +163,7 @@ function columnNames(tokens: string[], start: number): string[] {
   });
 }
 
-function parseColumn(tokens: string[]): DatabaseColumn {
+function parseColumn(tokens: string[], uniqueKeys: string[][] = []): DatabaseColumn {
   if (!isIdentifier(tokens[0]) || !/^[a-zA-Z]+$/.test(tokens[1] ?? "")) {
     throw new Error("Malformed column definition: expected a column name and data type.");
   }
@@ -190,6 +198,7 @@ function parseColumn(tokens: string[]): DatabaseColumn {
       continue;
     }
     if (keyword === "UNIQUE") {
+      uniqueKeys.push([identifier(tokens[0])]);
       index += next === "KEY" ? 2 : 1;
       continue;
     }
@@ -240,7 +249,7 @@ function parseColumn(tokens: string[]): DatabaseColumn {
 
 /** Extracts supported CREATE/ALTER schema definitions from MySQL dumps. */
 export function parseSqlSchema(sql: string): DatabaseSchema {
-  const schema: DatabaseSchema = { tables: [], relationships: [] };
+  const schema: DatabaseSchema = { tables: [], relationships: [], foreignKeys: [] };
   const tokens = tokenize(sql);
   for (let index = 0; index < tokens.length; index++) {
     // Every non-comment token must belong to a recognized statement or separator.
@@ -281,12 +290,14 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
     }
     const start = index + 1;
     const end = closingParen(tokens, start);
-    const table: DatabaseTable = { name, columns: [], primaryKeys: [] };
+    const table: DatabaseTable = { name, columns: [], primaryKeys: [], uniqueKeys: [] };
     for (let definition of splitDefinitions(tokens.slice(start + 1, end))) {
+      let constraintName: string | null = null;
       if (definition[0].toUpperCase() === "CONSTRAINT") {
         if (!isIdentifier(definition[1]) || !["PRIMARY", "FOREIGN", "UNIQUE", "CHECK"].includes(definition[2]?.toUpperCase())) {
           throw new Error("Malformed CONSTRAINT definition.");
         }
+        constraintName = identifier(definition[1]);
         definition = definition.slice(2);
       }
       const upper = definition.map((token) => token.toUpperCase());
@@ -294,6 +305,12 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
         if (upper[1] !== "KEY" || definition[2] !== "(") throw new Error("Expected PRIMARY KEY (columns).");
         table.primaryKeys.push(...columnNames(definition, 2));
         if (closingParen(definition, 2) !== definition.length - 1) unexpected(definition[closingParen(definition, 2) + 1]);
+      } else if (upper[0] === "UNIQUE") {
+        let keyStart = ["KEY", "INDEX"].includes(upper[1]) ? 2 : 1;
+        if (isIdentifier(definition[keyStart])) keyStart++;
+        const names = columnNames(definition, keyStart);
+        if (closingParen(definition, keyStart) !== definition.length - 1) unexpected(definition[closingParen(definition, keyStart) + 1]);
+        table.uniqueKeys.push(names);
       } else if (upper[0] === "FOREIGN") {
         const sourceStart = definition.indexOf("(");
         if (upper[1] !== "KEY" || !(sourceStart === 2 || (sourceStart === 3 && isIdentifier(definition[2])))) {
@@ -316,6 +333,7 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
         if (sourceColumns.length !== targetColumns.length) {
           throw new Error("Foreign key column counts must match.");
         }
+        schema.foreignKeys.push({ name: constraintName, sourceTable: name, sourceColumns, targetTable: identifier(definition[reference + 1]), targetColumns });
         sourceColumns.forEach((sourceColumn, position) => {
           schema.relationships.push({
             sourceTable: name,
@@ -326,7 +344,7 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
         });
       } else if (!["KEY", "INDEX", "UNIQUE", "CHECK"].includes(upper[0])) {
         if (definition.length < 2) throw new Error("Expected a column data type.");
-        const column = parseColumn(definition);
+        const column = parseColumn(definition, table.uniqueKeys);
         table.columns.push(column);
         if (column.isPrimaryKey) table.primaryKeys.push(column.name);
       }
@@ -355,5 +373,9 @@ export function parseSqlSchema(sql: string): DatabaseSchema {
       index = option;
     }
   }
+  // Keep the legacy per-column representation derived from grouped constraints.
+  schema.relationships = schema.foreignKeys.flatMap((key) => key.sourceColumns.map((sourceColumn, index) => ({
+    sourceTable: key.sourceTable, sourceColumn, targetTable: key.targetTable, targetColumn: key.targetColumns[index],
+  })));
   return schema;
 }
